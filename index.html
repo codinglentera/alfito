@@ -3,12 +3,14 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Mini Top-Down Shooter (Prototype)</title>
+<title>Mini Top-Down Shooter (Prototype) - HD Graphics</title>
 <style>
-  html,body { height:100%; margin:0; background:#111; color:#eee; font-family:Arial, sans-serif; }
-  #game { display:block; margin:10px auto; background:#222; box-shadow:0 0 10px rgba(0,0,0,0.7); }
-  #ui { text-align:center; margin-top:6px; }
-  button { padding:8px 12px; margin:0 6px; }
+  html,body { height:100%; margin:0; background:#0b0b0f; color:#eee; font-family:Inter, Arial, sans-serif; }
+  #game { display:block; margin:10px auto; background:#111; box-shadow:0 8px 30px rgba(0,0,0,0.8); border-radius:6px; }
+  #ui { text-align:center; margin-top:8px; }
+  button { padding:8px 12px; margin:0 6px; border-radius:6px; border:none; background:#1f6feb; color:white; cursor:pointer; }
+  button:active { transform:translateY(1px); }
+  #info { margin-left:10px; font-weight:600; }
 </style>
 </head>
 <body>
@@ -19,34 +21,81 @@
 </div>
 
 <script>
+// == HD graphics upgrade for the mini top-down shooter
+// Features added:
+// - High-DPI (devicePixelRatio) canvas scaling for sharp rendering on retina screens
+// - Noise & radial background + vignette
+// - Radial gradients & shadows for player/enemies/bullets
+// - Particle effects for explosions and bullet trails
+// - Additive blending for glow effects
+
 // --- Konfigurasi ---
 const CANVAS_W = 800, CANVAS_H = 600;
 const PLAYER_SPEED = 220; // px/s
-const BULLET_SPEED = 600;
-const ENEMY_SPEED = 60;
-const ENEMY_SPAWN_INTERVAL = 1200; // ms
-const FIRE_RATE = 200; // ms per shot
+const BULLET_SPEED = 640;
+const ENEMY_SPEED = 70;
+const ENEMY_SPAWN_INTERVAL = 1100; // ms
+const FIRE_RATE = 160; // ms per shot
 const PLAYER_MAX_HP = 5;
 
-// --- Setup canvas ---
+// --- Setup canvas & DPI scaling ---
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
+canvas.style.width = CANVAS_W + "px";
+canvas.style.height = CANVAS_H + "px";
+
+let DPR = Math.max(1, window.devicePixelRatio || 1);
+function resizeCanvas() {
+  DPR = Math.max(1, window.devicePixelRatio || 1);
+  canvas.style.width = CANVAS_W + "px";
+  canvas.style.height = CANVAS_H + "px";
+  canvas.width = Math.floor(CANVAS_W * DPR);
+  canvas.height = Math.floor(CANVAS_H * DPR);
+  // Use transform to draw in CSS pixel coordinates while benefiting from DPR
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  // regenerate noise if needed
+  generateNoisePattern();
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+// --- Pre-generate noise pattern for subtle film grain ---
+let noisePattern = null;
+function generateNoisePattern() {
+  const tileW = 256, tileH = 256;
+  const off = document.createElement('canvas');
+  off.width = tileW; off.height = tileH;
+  const octx = off.getContext('2d');
+  const id = octx.createImageData(tileW, tileH);
+  for (let i=0; i<id.data.length; i += 4) {
+    const v = 120 + Math.floor(Math.random()*80); // gray noise
+    id.data[i] = id.data[i+1] = id.data[i+2] = v;
+    id.data[i+3] = 8 + Math.floor(Math.random()*24); // low alpha
+  }
+  octx.putImageData(id, 0, 0);
+  noisePattern = ctx.createPattern(off, 'repeat');
+}
+
+// initial call
+generateNoisePattern();
 
 // --- Game state ---
 let lastTime = 0;
 let running = false;
 let keys = {};
-let mouse = { x: 0, y: 0, down: false };
+let mouse = { x: CANVAS_W/2, y: CANVAS_H/2, down: false };
 let bullets = [];
 let enemies = [];
+let particles = []; // for explosions, trails
 let score = 0;
 let lastSpawn = 0;
 let lastShot = 0;
 let player = {
   x: CANVAS_W/2,
   y: CANVAS_H/2,
-  r: 14,
-  hp: PLAYER_MAX_HP
+  r: 16,
+  hp: PLAYER_MAX_HP,
+  angle: 0
 };
 
 // --- Input handlers ---
@@ -54,41 +103,60 @@ window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
 window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 canvas.addEventListener('mousemove', e => {
   const rect = canvas.getBoundingClientRect();
-  mouse.x = (e.clientX - rect.left) * (canvas.width / rect.width);
-  mouse.y = (e.clientY - rect.top) * (canvas.height / rect.height);
+  mouse.x = (e.clientX - rect.left) * (canvas.width / rect.width) / DPR;
+  mouse.y = (e.clientY - rect.top) * (canvas.height / rect.height) / DPR;
 });
 canvas.addEventListener('mousedown', () => mouse.down = true);
 window.addEventListener('mouseup', () => mouse.down = false);
 
 // --- Utility ---
 function randRange(a,b){ return a + Math.random()*(b-a); }
-function dist(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy); }
+function dist(ax,ay,bx,by){ return Math.hypot(ax-bx, ay-by); }
+
+// --- Particles ---
+function spawnParticles(x,y,count,color,spread=1.0,speed=140,life=600) {
+  for (let i=0;i<count;i++){
+    const ang = Math.random()*Math.PI*2;
+    const spd = speed * (0.4 + Math.random()*0.8) * spread;
+    particles.push({
+      x, y,
+      vx: Math.cos(ang)*spd,
+      vy: Math.sin(ang)*spd,
+      life: life * (0.6 + Math.random()*0.8),
+      age: 0,
+      r: 1 + Math.random()*3,
+      color
+    });
+  }
+}
 
 // --- Game functions ---
 function spawnEnemy() {
-  // spawn at edges
   const side = Math.floor(Math.random()*4);
   let ex, ey;
-  if (side===0) { ex = -20; ey = randRange(0, CANVAS_H); }
-  if (side===1) { ex = CANVAS_W+20; ey = randRange(0, CANVAS_H); }
-  if (side===2) { ey = -20; ex = randRange(0, CANVAS_W); }
-  if (side===3) { ey = CANVAS_H+20; ex = randRange(0, CANVAS_W); }
-  enemies.push({ x: ex, y: ey, r: 12, hp: 1, speed: ENEMY_SPEED });
+  if (side===0) { ex = -30; ey = randRange(0, CANVAS_H); }
+  if (side===1) { ex = CANVAS_W+30; ey = randRange(0, CANVAS_H); }
+  if (side===2) { ey = -30; ex = randRange(0, CANVAS_W); }
+  if (side===3) { ey = CANVAS_H+30; ex = randRange(0, CANVAS_W); }
+  enemies.push({ x: ex, y: ey, r: 14 + Math.random()*8, hp: 1, speed: ENEMY_SPEED * (0.9 + Math.random()*0.5) });
 }
 
-function shootBullet(dt) {
+function shootBullet() {
   if (!mouse.down) return;
   const now = performance.now();
   if (now - lastShot < FIRE_RATE) return;
   lastShot = now;
   const angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
   bullets.push({
-    x: player.x + Math.cos(angle)*(player.r+6),
-    y: player.y + Math.sin(angle)*(player.r+6),
+    x: player.x + Math.cos(angle)*(player.r+8),
+    y: player.y + Math.sin(angle)*(player.r+8),
     vx: Math.cos(angle)*BULLET_SPEED,
     vy: Math.sin(angle)*BULLET_SPEED,
-    r: 4
+    r: 4,
+    created: now
   });
+  // small muzzle particle
+  spawnParticles(player.x + Math.cos(angle)*(player.r+4), player.y + Math.sin(angle)*(player.r+4), 6, '255,220,150', 0.4, 220);
 }
 
 function update(dt) {
@@ -103,26 +171,35 @@ function update(dt) {
   const len = Math.hypot(vx,vy) || 1;
   player.x += (vx/len) * PLAYER_SPEED * dt;
   player.y += (vy/len) * PLAYER_SPEED * dt;
-  player.x = Math.max(16, Math.min(CANVAS_W-16, player.x));
-  player.y = Math.max(16, Math.min(CANVAS_H-16, player.y));
+  player.x = Math.max(18, Math.min(CANVAS_W-18, player.x));
+  player.y = Math.max(18, Math.min(CANVAS_H-18, player.y));
+
+  // smooth angle toward mouse
+  const targetAng = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+  // lerp angle (shortest)
+  let a = targetAng - player.angle;
+  a = (a + Math.PI) % (Math.PI*2) - Math.PI;
+  player.angle += a * Math.min(1, 12 * dt);
 
   // shooting
-  shootBullet(dt);
+  shootBullet();
 
-  // bullets
+  // bullets update
   for (let i = bullets.length-1; i>=0; i--) {
     const b = bullets[i];
     b.x += b.vx*dt; b.y += b.vy*dt;
-    if (b.x < -50 || b.x > CANVAS_W+50 || b.y < -50 || b.y > CANVAS_H+50) {
+    // trailing particles
+    const lifeSince = performance.now() - b.created;
+    if (Math.random() < 0.6) spawnParticles(b.x, b.y, 1, '255,220,100', 0.08, 30, 120);
+    if (b.x < -80 || b.x > CANVAS_W+80 || b.y < -80 || b.y > CANVAS_H+80) {
       bullets.splice(i,1);
       continue;
     }
   }
 
-  // enemies
+  // enemies update
   for (let i = enemies.length-1; i>=0; i--) {
     const e = enemies[i];
-    // move toward player
     const dx = player.x - e.x, dy = player.y - e.y;
     const ang = Math.atan2(dy,dx);
     e.x += Math.cos(ang) * e.speed * dt;
@@ -131,9 +208,9 @@ function update(dt) {
     // collision with player
     const d = Math.hypot(e.x - player.x, e.y - player.y);
     if (d < e.r + player.r) {
-      // enemy hits player
       enemies.splice(i,1);
       player.hp -= 1;
+      spawnParticles(player.x, player.y, 20, '200,60,40', 1.2, 350);
       if (player.hp <= 0) {
         endGame();
         return;
@@ -154,6 +231,20 @@ function update(dt) {
     if (hit) {
       enemies.splice(i,1);
       score += 10;
+      spawnParticles(e.x, e.y, 18, '255,140,90', 1.5, 600);
+    }
+  }
+
+  // particles update
+  for (let i = particles.length-1; i>=0; i--) {
+    const p = particles[i];
+    p.age += dt * 1000;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    // apply slight drag
+    p.vx *= 0.99; p.vy *= 0.99;
+    if (p.age >= p.life) {
+      particles.splice(i,1);
     }
   }
 
@@ -164,65 +255,188 @@ function update(dt) {
   }
 }
 
+function drawBackground() {
+  // graded radial background (gives depth)
+  const g = ctx.createLinearGradient(0,0,0,CANVAS_H);
+  g.addColorStop(0, '#0f1220');
+  g.addColorStop(1, '#07060a');
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,CANVAS_W,CANVAS_H);
+
+  // subtle vignette
+  const vign = ctx.createRadialGradient(CANVAS_W/2, CANVAS_H/2, Math.min(CANVAS_W,CANVAS_H)*0.2, CANVAS_W/2, CANVAS_H/2, Math.max(CANVAS_W, CANVAS_H));
+  vign.addColorStop(0, 'rgba(255,255,255,0.02)');
+  vign.addColorStop(1, 'rgba(0,0,0,0.55)');
+  ctx.fillStyle = vign;
+  ctx.fillRect(0,0,CANVAS_W,CANVAS_H);
+
+  // faint grid lines (parallax-ish)
+  ctx.save();
+  ctx.globalAlpha = 0.04;
+  ctx.strokeStyle = '#9aa7ff';
+  ctx.lineWidth = 1;
+  const spacing = 48;
+  for (let x = 0; x <= CANVAS_W; x += spacing) {
+    ctx.beginPath();
+    ctx.moveTo(x+ (performance.now()/500 % spacing), 0);
+    ctx.lineTo(x+ (performance.now()/500 % spacing), CANVAS_H);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= CANVAS_H; y += spacing) {
+    ctx.beginPath();
+    ctx.moveTo(0, y + (performance.now()/700 % spacing));
+    ctx.lineTo(CANVAS_W, y + (performance.now()/700 % spacing));
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // noise overlay
+  if (noisePattern) {
+    ctx.save();
+    ctx.globalAlpha = 0.07;
+    ctx.fillStyle = noisePattern;
+    ctx.fillRect(0,0,CANVAS_W,CANVAS_H);
+    ctx.restore();
+  }
+}
+
 function draw() {
-  // clear
+  // clear (we redraw full background)
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  // background grid
-  ctx.fillStyle = "#161616";
-  ctx.fillRect(0,0,canvas.width,canvas.height);
+  // background
+  drawBackground();
 
-  // bullets
+  // bullets (behind player but with glow)
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
   for (const b of bullets) {
-    ctx.fillStyle = "#ffdd55";
+    // soft glow
+    const rad = b.r;
+    const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, rad*3);
+    g.addColorStop(0, 'rgba(255,240,160,0.95)');
+    g.addColorStop(0.2, 'rgba(255,200,80,0.7)');
+    g.addColorStop(1, 'rgba(255,120,40,0)');
+    ctx.fillStyle = g;
     ctx.beginPath();
-    ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
+    ctx.arc(b.x, b.y, rad*3, 0, Math.PI*2);
+    ctx.fill();
+
+    // core
+    ctx.fillStyle = '#fff6d6';
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, rad, 0, Math.PI*2);
     ctx.fill();
   }
+  ctx.restore();
 
   // enemies
   for (const e of enemies) {
-    ctx.fillStyle = "#e05050";
+    // body gradient
+    const g = ctx.createRadialGradient(e.x - e.r*0.4, e.y - e.r*0.4, e.r*0.1, e.x, e.y, e.r);
+    g.addColorStop(0, '#ff8a8a');
+    g.addColorStop(0.6, '#e05050');
+    g.addColorStop(1, '#831b1b');
+    ctx.fillStyle = g;
+    ctx.shadowColor = 'rgba(224,80,80,0.55)';
+    ctx.shadowBlur = 18;
     ctx.beginPath();
     ctx.arc(e.x, e.y, e.r, 0, Math.PI*2);
     ctx.fill();
-    // simple eye
-    ctx.fillStyle = "#311";
+    ctx.shadowBlur = 0;
+
+    // inner eye
+    const eyeX = e.x + Math.cos(performance.now()/300 + e.x)*2;
+    const eyeY = e.y + Math.sin(performance.now()/300 + e.y)*2;
+    ctx.fillStyle = '#2b0b0b';
     ctx.beginPath();
-    ctx.arc(e.x + Math.cos(performance.now()/300)*2, e.y + Math.sin(performance.now()/300)*2, 3, 0, Math.PI*2);
+    ctx.arc(eyeX, eyeY, Math.max(2, e.r*0.22), 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#ffd6d6';
+    ctx.beginPath();
+    ctx.arc(eyeX - 1, eyeY - 1, Math.max(1, e.r*0.08), 0, Math.PI*2);
     ctx.fill();
   }
 
-  // player
-  // body
-  const ang = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+  // player (on top)
   ctx.save();
   ctx.translate(player.x, player.y);
-  ctx.rotate(ang);
-  ctx.fillStyle = "#55aaff";
+  ctx.rotate(player.angle);
+  // shield/outer glow
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.fillStyle = 'rgba(80,170,255,0.08)';
   ctx.beginPath();
-  ctx.moveTo(14,0);
-  ctx.lineTo(-10,-10);
-  ctx.lineTo(-6,0);
-  ctx.lineTo(-10,10);
+  ctx.arc(0,0,player.r*2.2,0,Math.PI*2);
+  ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+
+  // body gradient
+  const pg = ctx.createLinearGradient(-player.r, -player.r, player.r, player.r);
+  pg.addColorStop(0, '#7fd1ff');
+  pg.addColorStop(1, '#1a9cff');
+  ctx.fillStyle = pg;
+  ctx.shadowColor = 'rgba(60,150,255,0.8)';
+  ctx.shadowBlur = 20;
+  ctx.beginPath();
+  ctx.moveTo(player.r, 0);
+  ctx.lineTo(-player.r*0.6, -player.r*0.9);
+  ctx.lineTo(-player.r*0.25, 0);
+  ctx.lineTo(-player.r*0.6, player.r*0.9);
   ctx.closePath();
   ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // cockpit
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  ctx.beginPath();
+  ctx.ellipse(-player.r*0.1, 0, player.r*0.45, player.r*0.28, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // thruster when moving - spawn small flame visuals
+  if (keys['w'] || keys['a'] || keys['s'] || keys['d'] || keys['arrowup'] || keys['arrowleft'] || keys['arrowdown'] || keys['arrowright']) {
+    ctx.save();
+    ctx.translate(-player.r - 2, 0);
+    const flameGrad = ctx.createRadialGradient(0,0,0,0,0,player.r);
+    flameGrad.addColorStop(0, 'rgba(255,220,120,0.95)');
+    flameGrad.addColorStop(0.3, 'rgba(255,110,40,0.8)');
+    flameGrad.addColorStop(1, 'rgba(255,60,20,0)');
+    ctx.fillStyle = flameGrad;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, player.r*0.9, player.r*0.4, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   ctx.restore();
 
-  // HUD
-  ctx.fillStyle = "#fff";
-  ctx.font = "16px Arial";
-  ctx.fillText("Score: " + score, 12, 20);
-  ctx.fillText("HP: " + player.hp, 12, 40);
-  ctx.fillText("Enemies: " + enemies.length, 12, 60);
+  // particles (additive for glow)
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const p of particles) {
+    const t = 1 - (p.age / p.life);
+    ctx.globalAlpha = Math.max(0, Math.min(1, t));
+    ctx.fillStyle = `rgba(${p.color},${0.9 * Math.max(0.12, t)})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * (0.4 + t*1.6), 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+
+  // HUD (non-scaled)
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "16px Inter, Arial";
+  ctx.fillText("Score: " + score, 14, 22);
+  ctx.fillText("HP: " + player.hp, 14, 44);
+  ctx.fillText("Enemies: " + enemies.length, 14, 66);
 
   if (!running) {
     ctx.fillStyle = "rgba(0,0,0,0.55)";
-    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillRect(0,0,CANVAS_W,CANVAS_H);
     ctx.fillStyle = "#fff";
-    ctx.font = "28px Arial";
+    ctx.font = "28px Inter, Arial";
     ctx.textAlign = "center";
-    ctx.fillText("Klik 'Mulai Game' untuk bermain", canvas.width/2, canvas.height/2 - 10);
+    ctx.fillText("Klik 'Mulai Game' untuk bermain", CANVAS_W/2, CANVAS_H/2 - 10);
     ctx.textAlign = "start";
   }
 }
@@ -238,9 +452,9 @@ function loop(ts) {
 }
 
 function startGame() {
-  // reset
   bullets = [];
   enemies = [];
+  particles = [];
   score = 0;
   player.x = CANVAS_W/2; player.y = CANVAS_H/2;
   player.hp = PLAYER_MAX_HP;
@@ -255,6 +469,7 @@ function endGame() {
   document.getElementById('info').textContent = "Game Over. Score: " + score;
 }
 
+// UI bindings
 document.getElementById('startBtn').addEventListener('click', () => {
   startGame();
   canvas.focus();
