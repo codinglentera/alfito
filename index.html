@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Mini Top-Down Shooter (Prototype)</title>
+<style>
+  html,body { height:100%; margin:0; background:#111; color:#eee; font-family:Arial, sans-serif; }
+  #game { display:block; margin:10px auto; background:#222; box-shadow:0 0 10px rgba(0,0,0,0.7); }
+  #ui { text-align:center; margin-top:6px; }
+  button { padding:8px 12px; margin:0 6px; }
+</style>
+</head>
+<body>
+<canvas id="game" width="800" height="600"></canvas>
+<div id="ui">
+  <button id="startBtn">Mulai Game</button>
+  <span id="info">Klik Mulai untuk bermain</span>
+</div>
+
+<script>
+// --- Konfigurasi ---
+const CANVAS_W = 800, CANVAS_H = 600;
+const PLAYER_SPEED = 220; // px/s
+const BULLET_SPEED = 600;
+const ENEMY_SPEED = 60;
+const ENEMY_SPAWN_INTERVAL = 1200; // ms
+const FIRE_RATE = 200; // ms per shot
+const PLAYER_MAX_HP = 5;
+
+// --- Setup canvas ---
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// --- Game state ---
+let lastTime = 0;
+let running = false;
+let keys = {};
+let mouse = { x: 0, y: 0, down: false };
+let bullets = [];
+let enemies = [];
+let score = 0;
+let lastSpawn = 0;
+let lastShot = 0;
+let player = {
+  x: CANVAS_W/2,
+  y: CANVAS_H/2,
+  r: 14,
+  hp: PLAYER_MAX_HP
+};
+
+// --- Input handlers ---
+window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  mouse.x = (e.clientX - rect.left) * (canvas.width / rect.width);
+  mouse.y = (e.clientY - rect.top) * (canvas.height / rect.height);
+});
+canvas.addEventListener('mousedown', () => mouse.down = true);
+window.addEventListener('mouseup', () => mouse.down = false);
+
+// --- Utility ---
+function randRange(a,b){ return a + Math.random()*(b-a); }
+function dist(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy); }
+
+// --- Game functions ---
+function spawnEnemy() {
+  // spawn at edges
+  const side = Math.floor(Math.random()*4);
+  let ex, ey;
+  if (side===0) { ex = -20; ey = randRange(0, CANVAS_H); }
+  if (side===1) { ex = CANVAS_W+20; ey = randRange(0, CANVAS_H); }
+  if (side===2) { ey = -20; ex = randRange(0, CANVAS_W); }
+  if (side===3) { ey = CANVAS_H+20; ex = randRange(0, CANVAS_W); }
+  enemies.push({ x: ex, y: ey, r: 12, hp: 1, speed: ENEMY_SPEED });
+}
+
+function shootBullet(dt) {
+  if (!mouse.down) return;
+  const now = performance.now();
+  if (now - lastShot < FIRE_RATE) return;
+  lastShot = now;
+  const angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+  bullets.push({
+    x: player.x + Math.cos(angle)*(player.r+6),
+    y: player.y + Math.sin(angle)*(player.r+6),
+    vx: Math.cos(angle)*BULLET_SPEED,
+    vy: Math.sin(angle)*BULLET_SPEED,
+    r: 4
+  });
+}
+
+function update(dt) {
+  if (!running) return;
+
+  // player movement
+  let vx = 0, vy = 0;
+  if (keys['w'] || keys['arrowup']) vy -= 1;
+  if (keys['s'] || keys['arrowdown']) vy += 1;
+  if (keys['a'] || keys['arrowleft']) vx -= 1;
+  if (keys['d'] || keys['arrowright']) vx += 1;
+  const len = Math.hypot(vx,vy) || 1;
+  player.x += (vx/len) * PLAYER_SPEED * dt;
+  player.y += (vy/len) * PLAYER_SPEED * dt;
+  player.x = Math.max(16, Math.min(CANVAS_W-16, player.x));
+  player.y = Math.max(16, Math.min(CANVAS_H-16, player.y));
+
+  // shooting
+  shootBullet(dt);
+
+  // bullets
+  for (let i = bullets.length-1; i>=0; i--) {
+    const b = bullets[i];
+    b.x += b.vx*dt; b.y += b.vy*dt;
+    if (b.x < -50 || b.x > CANVAS_W+50 || b.y < -50 || b.y > CANVAS_H+50) {
+      bullets.splice(i,1);
+      continue;
+    }
+  }
+
+  // enemies
+  for (let i = enemies.length-1; i>=0; i--) {
+    const e = enemies[i];
+    // move toward player
+    const dx = player.x - e.x, dy = player.y - e.y;
+    const ang = Math.atan2(dy,dx);
+    e.x += Math.cos(ang) * e.speed * dt;
+    e.y += Math.sin(ang) * e.speed * dt;
+
+    // collision with player
+    const d = Math.hypot(e.x - player.x, e.y - player.y);
+    if (d < e.r + player.r) {
+      // enemy hits player
+      enemies.splice(i,1);
+      player.hp -= 1;
+      if (player.hp <= 0) {
+        endGame();
+        return;
+      }
+      continue;
+    }
+
+    // collision with bullets
+    let hit = false;
+    for (let j = bullets.length-1; j>=0; j--) {
+      const b = bullets[j];
+      if (Math.hypot(b.x-e.x, b.y-e.y) < e.r + b.r) {
+        bullets.splice(j,1);
+        hit = true;
+        break;
+      }
+    }
+    if (hit) {
+      enemies.splice(i,1);
+      score += 10;
+    }
+  }
+
+  // spawn enemies
+  if (performance.now() - lastSpawn > ENEMY_SPAWN_INTERVAL) {
+    spawnEnemy();
+    lastSpawn = performance.now();
+  }
+}
+
+function draw() {
+  // clear
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // background grid
+  ctx.fillStyle = "#161616";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // bullets
+  for (const b of bullets) {
+    ctx.fillStyle = "#ffdd55";
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // enemies
+  for (const e of enemies) {
+    ctx.fillStyle = "#e05050";
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, e.r, 0, Math.PI*2);
+    ctx.fill();
+    // simple eye
+    ctx.fillStyle = "#311";
+    ctx.beginPath();
+    ctx.arc(e.x + Math.cos(performance.now()/300)*2, e.y + Math.sin(performance.now()/300)*2, 3, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // player
+  // body
+  const ang = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+  ctx.save();
+  ctx.translate(player.x, player.y);
+  ctx.rotate(ang);
+  ctx.fillStyle = "#55aaff";
+  ctx.beginPath();
+  ctx.moveTo(14,0);
+  ctx.lineTo(-10,-10);
+  ctx.lineTo(-6,0);
+  ctx.lineTo(-10,10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // HUD
+  ctx.fillStyle = "#fff";
+  ctx.font = "16px Arial";
+  ctx.fillText("Score: " + score, 12, 20);
+  ctx.fillText("HP: " + player.hp, 12, 40);
+  ctx.fillText("Enemies: " + enemies.length, 12, 60);
+
+  if (!running) {
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = "#fff";
+    ctx.font = "28px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("Klik 'Mulai Game' untuk bermain", canvas.width/2, canvas.height/2 - 10);
+    ctx.textAlign = "start";
+  }
+}
+
+// game loop
+function loop(ts) {
+  if (!lastTime) lastTime = ts;
+  const dt = Math.min(0.05, (ts - lastTime) / 1000);
+  lastTime = ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function startGame() {
+  // reset
+  bullets = [];
+  enemies = [];
+  score = 0;
+  player.x = CANVAS_W/2; player.y = CANVAS_H/2;
+  player.hp = PLAYER_MAX_HP;
+  lastSpawn = performance.now();
+  lastShot = 0;
+  running = true;
+  document.getElementById('info').textContent = "Bermain... Gunakan WASD dan mouse";
+}
+
+function endGame() {
+  running = false;
+  document.getElementById('info').textContent = "Game Over. Score: " + score;
+}
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  startGame();
+  canvas.focus();
+});
+
+// start loop
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
