@@ -1,96 +1,200 @@
-// Kumpulan kata acak pilihan untuk lomba mengetik
-const daftarKata = [
-    "teknologi", "komputer", "program", "javascript", "logika",
-    "koding", "belajar", "internet", "aplikasi", "jaringan",
-    "memori", "database", "sistem", "informasi", "kecepatan",
-    "akurat", "tantangan", "bermain", "semangat", "sukses"
-];
-
-const kataTarget = document.getElementById('kata-target');
-const inputKata = document.getElementById('input-kata');
-const waktuVal = document.getElementById('waktu-val');
-const skorVal = document.getElementById('skor-val');
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreVal = document.getElementById('score-val');
+const speedVal = document.getElementById('speed-val');
 const overlay = document.getElementById('overlay');
 const startBtn = document.getElementById('start-btn');
-const overlayTitle = document.getElementById('overlay-title');
-const overlayDesc = document.getElementById('overlay-desc');
+const title = document.getElementById('title');
+const desc = document.getElementById('desc');
 
-let skor = 0;
-let waktu = 10; // Durasi awal dalam detik
-let hitungMundur = null;
-let gameAktif = false;
+// Variabel Kontrol Permainan
+let score = 0;
+let gameSpeed = 4.5; 
+let gameActive = false;
+let animationId = null;
+let obstacles = [];
+let spawnTimer = 0;
+let spawnInterval = 75; 
 
-// Fungsi untuk mengambil kata acak dari daftar
-function acakKata() {
-    const indeksAcak = Math.floor(Math.random() * daftarKata.length);
-    kataTarget.textContent = daftarKata[indeksAcak];
-}
+// Fisika Pesawat (Inersia Tinggi / Sangat Licin)
+const player = {
+    x: canvas.width / 2,
+    y: canvas.height - 80,
+    width: 30,
+    height: 30,
+    vx: 0,            // Kecepatan horizontal saat ini
+    acceleration: 0.7,// Akselerasi per frame
+    friction: 0.92,   // Efek gesekan rem alami (semakin mendekati 1, semakin licin)
+    maxSpeed: 9       // Batas kecepatan maksimum
+};
 
-// Fungsi memulai permainan baru
-function mulaiGame() {
-    skor = 0;
-    waktu = 10;
-    gameAktif = true;
+const keys = { ArrowLeft: false, ArrowRight: false };
 
-    skorVal.textContent = skor;
-    waktuVal.textContent = waktu;
-    inputKata.value = '';
-    
-    overlay.classList.remove('visible');
-    acakKata();
-    
-    // Pastikan kotak input langsung siap diketik tanpa perlu diklik manual
-    setTimeout(() => inputKata.focus(), 50);
+window.addEventListener('keydown', (e) => {
+    if (e.key in keys) keys[e.key] = true;
+});
 
-    // Jalankan timer hitung mundur setiap 1 detik (1000 milidetik)
-    clearInterval(hitungMundur);
-    hitungMundur = setInterval(updateTimer, 1000);
-}
+window.addEventListener('keyup', (e) => {
+    if (e.key in keys) keys[e.key] = false;
+});
 
-// Fungsi memperbarui sisa waktu permainan
-function updateTimer() {
-    waktu--;
-    waktuVal.textContent = waktu;
+// Class Rintangan Celah Dinding Bergerak
+class ObstacleRow {
+    constructor(speed) {
+        this.y = -40;
+        this.height = 30;
+        this.speed = speed;
+        
+        // Menghitung lebar celah aman secara dinamis berdasarkan tingkat skor
+        this.gateWidth = Math.max(75, 150 - Math.floor(score * 0.4));
+        
+        // Memilih titik tengah celah aman secara acak
+        this.gateX = Math.floor(Math.random() * (canvas.width - this.gateWidth - 60)) + 30;
+    }
 
-    if (waktu <= 0) {
-        clearInterval(hitungMundur);
-        gameAktif = false;
-        triggerGameOver();
+    update() {
+        this.y += this.speed;
+    }
+
+    draw() {
+        ctx.fillStyle = '#ff0055';
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = '#ff0055';
+
+        // Blok rintangan bagian kiri sebelum celah aman
+        ctx.fillRect(0, this.y, this.gateX, this.height);
+        
+        // Blok rintangan bagian kanan setelah celah aman
+        const rightX = this.gateX + this.gateWidth;
+        ctx.fillRect(rightX, this.y, canvas.width - rightX, this.height);
+        
+        ctx.shadowBlur = 0; // Reset efek glow
+    }
+
+    checkCollision(p) {
+        // Cek apakah koordinat Y pesawat bersinggungan dengan baris balok
+        if (p.y < this.y + this.height && p.y + p.height > this.y) {
+            // Jika pesawat TIDAK berada di dalam batas celah aman, maka terjadi tabrakan
+            if (p.x < this.gateX || p.x + p.width > this.gateX + this.gateWidth) {
+                return true;
+            }
+        }
+        return false;
     }
 }
 
-// Fungsi memicu kondisi Game Over ketika waktu habis
+function initGame() {
+    score = 0;
+    gameSpeed = 4.5;
+    spawnInterval = 75;
+    obstacles = [];
+    spawnTimer = 0;
+    
+    player.x = canvas.width / 2 - player.width / 2;
+    player.vx = 0;
+    
+    scoreVal.textContent = score;
+    speedVal.textContent = (gameSpeed / 4.5).toFixed(1);
+    overlay.classList.remove('visible');
+    
+    gameActive = true;
+    if (animationId) cancelAnimationFrame(animationId);
+    loop();
+}
+
 function triggerGameOver() {
-    overlayTitle.textContent = "WAKTU HABIS!";
-    overlayTitle.style.color = "#f43f5e";
-    overlayDesc.innerHTML = `Lomba selesai!<br>Total skor kecepatan mengetik Anda: <b style="color:#10b981; font-size: 1.5rem;">${skor}</b>`;
-    startBtn.textContent = "COBA LAGI";
+    gameActive = false;
+    cancelAnimationFrame(animationId);
+
+    title.textContent = "QUANTUM CRASHED";
+    title.style.color = "#ff0055";
+    desc.innerHTML = `Sistem hancur total.<br>Skor Evakuasi: <span style="color:#00ffcc; font-size:24px;"><b>${score}</b></span>`;
+    startBtn.textContent = "REBOOT SIMULASI";
     overlay.classList.add('visible');
 }
 
-// Deteksi input ketikan dari pemain secara real-time
-inputKata.addEventListener('input', () => {
-    if (!gameAktif) return;
+function loop() {
+    if (!gameActive) return;
 
-    const teksKetik = inputKata.value.trim().toLowerCase();
-    const teksTarget = kataTarget.textContent.toLowerCase();
+    // 1. Membersihkan Layar dengan Efek Transparansi untuk Motion Blur
+    ctx.fillStyle = 'rgba(10, 10, 25, 0.3)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Jika kata yang diketik cocok 100% dengan target
-    if (teksKetik === teksTarget) {
-        skor++;
-        skorVal.textContent = skor;
-        
-        // Bersihkan kotak input untuk kata selanjutnya
-        inputKata.value = '';
-        
-        // Berikan bonus tambahan waktu +2 detik per kata benar agar bisa bertahan lebih lama
-        waktu += 2;
-        waktuVal.textContent = waktu;
-        
-        // Ganti ke kata baru
-        acakKata();
+    // 2. Kalkulasi Fisika Gerakan Inersia Pesawat
+    if (keys.ArrowLeft) {
+        player.vx -= player.acceleration;
     }
-});
+    if (keys.ArrowRight) {
+        player.vx += player.acceleration;
+    }
 
-// Jalankan fungsi saat tombol klik diakses
-startBtn.addEventListener('click', mulaiGame);
+    // Terapkan hambatan fiksi dan batasi kecepatan maksimal
+    player.vx *= player.friction;
+    player.vx = Math.max(-player.maxSpeed, Math.min(player.maxSpeed, player.vx));
+    
+    // Perbarui posisi koordinat X pesawat
+    player.x += player.vx;
+
+    // Batasi agar pesawat tidak keluar dari dinding pembatas canvas kiri/kanan
+    if (player.x < 0) {
+        player.x = 0;
+        player.vx = 0;
+    }
+    if (player.x + player.width > canvas.width) {
+        player.x = canvas.width - player.width;
+        player.vx = 0;
+    }
+
+    // 3. Logika Penambahan Rintangan Baru secara Berkala
+    spawnTimer++;
+    if (spawnTimer >= spawnInterval) {
+        obstacles.push(new ObstacleRow(gameSpeed));
+        spawnTimer = 0;
+
+        // Tingkatkan kecepatan game dan perkecil jeda spawn secara konstan
+        gameSpeed += 0.15;
+        spawnInterval = Math.max(35, spawnInterval - 1);
+        speedVal.textContent = (gameSpeed / 4.5).toFixed(1);
+    }
+
+    // 4. Perbarui Posisi, Gambar, dan Deteksi Tabrakan Setiap Rintangan
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+        obstacles[i].update();
+        obstacles[i].draw();
+
+        if (obstacles[i].checkCollision(player)) {
+            triggerGameOver();
+            return;
+        }
+
+        // Jika rintangan sudah keluar dari batas bawah layar canvas
+        if (obstacles[i].y > canvas.height) {
+            obstacles.splice(i, 1);
+            score += 10;
+            scoreVal.textContent = score;
+        }
+    }
+
+    // 5. Menggambar Karakter Pesawat Segitiga Neon Cyberspace
+    ctx.save();
+    ctx.translate(player.x + player.width / 2, player.y + player.height / 2);
+    
+    // Memberikan kemiringan visual halus pada model pesawat berdasarkan arah kecepatan momentum
+    ctx.rotate(player.vx * 0.03); 
+
+    ctx.fillStyle = '#00ffcc';
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = '#00ffcc';
+    
+    ctx.beginPath();
+    ctx.moveTo(0, -player.height / 2);
+    ctx.lineTo(-player.width / 2, player.height / 2);
+    ctx.lineTo(player.width / 2, player.height / 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    animationId = requestAnimationFrame(loop);
+}
+
+startBtn.addEventListener('click', initGame);
