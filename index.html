@@ -1,22 +1,26 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="id">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Mini Geometry Dash - Prototype</title>
-  <link rel="stylesheet" href="styles.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cyber Hexagon - Hard Mode</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="wrap">
-    <canvas id="game" width="900" height="450"></canvas>
-    <div class="hud">
-      <button id="startBtn">Mulai</button>
-      <button id="muteBtn">Suara: ON</button>
-      <div id="info">Tekan Space / Klik / Tap untuk meloncat</div>
-      <div id="score">Jarak: 0</div>
+    <div id="game-container">
+        <div id="ui-layer">
+            <div id="score-board">SKOR: <span id="score-val">0</span></div>
+            <div id="level-board">LEVEL: <span id="level-val">1</span></div>
+        </div>
+        
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        
+        <div id="overlay" class="visible">
+            <h1 id="game-title">CYBER HEXAGON</h1>
+            <p id="game-desc">Gunakan panah <b>KIRI / KANAN</b> untuk berputar. Hindari dinding segi enam yang menyusut!</p>
+            <button id="start-btn">MULAI PERMAINAN</button>
+        </div>
     </div>
-  </div>
-
-  <script src="game.js" defer></script>
+    <script src="script.js"></script>
 </body>
 </html>
