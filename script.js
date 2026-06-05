@@ -1,377 +1,229 @@
-// Geometry Dash - like prototype (single-file logic separated)
-// Save as game.js and include with <script src="game.js" defer></script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreVal = document.getElementById('score-val');
+const levelVal = document.getElementById('level-val');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('start-btn');
+const gameTitle = document.getElementById('game-title');
+const gameDesc = document.getElementById('game-desc');
 
-(() => {
-  // Canvas & DPI
-  const canvas = document.getElementById('game');
-  const ctx = canvas.getContext('2d');
+// Pengaturan Konfigurasi Game
+const CENTER_X = canvas.width / 2;
+const CENTER_Y = canvas.height / 2;
+const PLAYER_DISTANCE = 40;
+const PLAYER_SIZE = 8;
 
-  const CSS_W = 900, CSS_H = 450;
-  function fitCanvas() {
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
-    canvas.style.width = CSS_W + 'px';
-    canvas.style.height = CSS_H + 'px';
-    canvas.width = Math.floor(CSS_W * dpr);
-    canvas.height = Math.floor(CSS_H * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }
-  window.addEventListener('resize', fitCanvas);
-  fitCanvas();
+let score = 0;
+let level = 1;
+let gameOver = false;
+let gameActive = false;
+let animationId = null;
 
-  // Game constants
-  const GROUND_Y = CSS_H - 90;
-  const GRAVITY = 2000; // px/s^2
-  const JUMP_VELOCITY = -680; // px/s
-  const PLAYER_SIZE = 48;
-  const SCROLL_START = 360; // speed px/s initial
-  const SPEED_INC = 0.005; // per meter/distance
-  const OB_MIN_GAP = 180;
-  const OB_MAX_GAP = 420;
-  const OB_MIN_W = 20;
-  const OB_MAX_W = 70;
+let playerAngle = 0; 
+let obstacles = [];
+let spawnTimer = 0;
+let spawnInterval = 90; // Frame per kemunculan dinding (semakin kecil, semakin rapat)
+let baseSpeed = 2.5;
 
-  // State
-  let running = false;
-  let lastTime = 0;
-  let scrollSpeed = 360;
-  let distance = 0; // used as score (meters)
-  let obstacles = [];
-  let particles = [];
-  let rngSeed = Math.random()*1000;
+// Deteksi Input Keyboard
+const keys = { ArrowLeft: false, ArrowRight: false };
 
-  // Player
-  const player = {
-    x: 140,
-    y: GROUND_Y - PLAYER_SIZE,
-    vy: 0,
-    w: PLAYER_SIZE,
-    h: PLAYER_SIZE,
-    grounded: true,
-    alive: true,
-    rotation: 0 // for small tilt effect
-  };
+window.addEventListener('keydown', (e) => {
+    if (e.key in keys) keys[e.key] = true;
+});
 
-  // UI
-  const startBtn = document.getElementById('startBtn');
-  const scoreEl = document.getElementById('score');
-  const infoEl = document.getElementById('info');
-  const muteBtn = document.getElementById('muteBtn');
-  let muted = false;
-  muteBtn.addEventListener('click', () => {
-    muted = !muted;
-    muteBtn.textContent = 'Suara: ' + (muted ? 'OFF' : 'ON');
-  });
+window.addEventListener('keyup', (e) => {
+    if (e.key in keys) keys[e.key] = false;
+});
 
-  startBtn.addEventListener('click', () => {
-    if (!running) startGame();
-    else resetGame();
-  });
-
-  // Input (space, click, touch)
-  let inputLocked = false;
-  function doJump() {
-    if (!running) { startGame(); return; }
-    if (!player.alive) return;
-    // allow coyote time & single jump
-    if (player.grounded || (player.vy > 0 && player.y > GROUND_Y - PLAYER_SIZE - 14)) {
-      player.vy = JUMP_VELOCITY;
-      player.grounded = false;
-      spawnJumpParticles(player.x + player.w*0.5, player.y + player.h);
-      // small sound (web audio optional) - omitted if muted
+// Class untuk Dinding Pemblokir (Rintangan)
+class HexWall {
+    constructor(speed) {
+        this.radius = Math.max(canvas.width, canvas.height);
+        this.speed = speed;
+        // Memilih secara acak 1 sampai 2 sisi yang kosong dari total 6 sisi hexagon
+        this.openSides = [];
+        const count = Math.random() > 0.6 ? 2 : 1;
+        while (this.openSides.length < count) {
+            const side = Math.floor(Math.random() * 6);
+            if (!this.openSides.includes(side)) {
+                this.openSides.push(side);
+            }
+        }
+        this.color = `hsl(${(level * 40) % 360}, 100%, 50%)`;
     }
-  }
 
-  window.addEventListener('keydown', (e) => {
-    if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
-      e.preventDefault();
-      doJump();
+    update() {
+        this.radius -= this.speed;
     }
-  });
-  canvas.addEventListener('mousedown', (e) => {
-    doJump();
-  });
-  canvas.addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    doJump();
-  }, {passive:false});
 
-  // Obstacles generator
-  function rand(a,b){ return a + Math.random()*(b-a); }
-  function addObstacle(x) {
-    const w = rand(OB_MIN_W, OB_MAX_W);
-    const h = rand(36, 110);
-    const y = GROUND_Y - h;
-    obstacles.push({ x, w, h, y });
-  }
+    draw() {
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = this.color;
+        
+        for (let i = 0; i < 6; i++) {
+            // Lewati penggambaran garis jika sisi ini adalah jalur aman yang kosong
+            if (this.openSides.includes(i)) continue;
 
-  function ensureObstacles() {
-    // ensure there is always obstacle ahead
-    const last = obstacles.length ? obstacles[obstacles.length - 1] : null;
-    const spawnX = CSS_W + 80;
-    if (!last) {
-      addObstacle(spawnX + rand(0, 260));
-      return;
+            const angle1 = (i * Math.PI) / 3;
+            const angle2 = ((i + 1) * Math.PI) / 3;
+
+            const x1 = CENTER_X + Math.cos(angle1) * this.radius;
+            const y1 = CENTER_Y + Math.sin(angle1) * this.radius;
+            const x2 = CENTER_X + Math.cos(angle2) * this.radius;
+            const y2 = CENTER_Y + Math.sin(angle2) * this.radius;
+
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+        }
     }
-    const gap = rand(OB_MIN_GAP, OB_MAX_GAP) - Math.min(scrollSpeed*0.2, 200);
-    if (last.x + last.w + gap < CSS_W + 300) {
-      addObstacle(last.x + last.w + gap);
-    }
-  }
 
-  // Collision AABB
-  function rectsOverlap(a, b) {
-    return !(a.x + a.w <= b.x || a.x >= b.x + b.w || a.y + a.h <= b.y || a.y >= b.y + b.h);
-  }
+    checkCollision(pAngle) {
+        // Normalisasi sudut pemain antara 0 sampai 2*PI
+        let normalizedAngle = pAngle % (Math.PI * 2);
+        if (normalizedAngle < 0) normalizedAngle += Math.PI * 2;
 
-  // Particles for feedback
-  function spawnJumpParticles(x,y) {
-    for (let i=0;i<12;i++){
-      particles.push({
-        x: x + rand(-8,8), y: y + rand(-4,4),
-        vx: rand(-120,120), vy: rand(-200, -60),
-        life: rand(300,700), age:0, r: rand(1.5,3), color: `255,200,80`
-      });
-    }
-  }
-  function spawnDeathParticles(x,y) {
-    for (let i=0;i<32;i++){
-      particles.push({
-        x, y,
-        vx: rand(-520,520), vy: rand(-520,520),
-        life: rand(400,1100), age:0, r: rand(2,6), color: `255,110,80`
-      });
-    }
-  }
+        // Tentukan sisi mana yang sedang ditempati pemain (0 - 5)
+        const playerSide = Math.floor(normalizedAngle / (Math.PI / 3)) % 6;
 
-  // Game controls
-  function startGame(){
-    // reset
+        // Jika radius dinding berada di area jarak pemain, periksa tabrakan
+        if (this.radius >= PLAYER_DISTANCE - 5 && this.radius <= PLAYER_DISTANCE + 5) {
+            if (!this.openSides.includes(playerSide)) {
+                return true; // Menabrak dinding solid
+            }
+        }
+        return false;
+    }
+}
+
+function initGame() {
+    score = 0;
+    level = 1;
+    baseSpeed = 2.5;
+    spawnInterval = 90;
+    playerAngle = 0;
     obstacles = [];
-    particles = [];
-    scrollSpeed = SCROLL_START;
-    distance = 0;
-    player.x = 140;
-    player.y = GROUND_Y - PLAYER_SIZE;
-    player.vy = 0;
-    player.grounded = true;
-    player.alive = true;
-    running = true;
-    lastTime = 0;
-    startBtn.textContent = 'Restart';
-    infoEl.textContent = 'Berlari... Tekan/klik untuk meloncat';
-    ensureObstacles();
-  }
+    spawnTimer = 0;
+    gameOver = false;
+    gameActive = true;
 
-  function resetGame(){
-    startGame();
-  }
+    scoreVal.textContent = score;
+    levelVal.textContent = level;
+    overlay.classList.remove('visible');
+    
+    if (animationId) cancelAnimationFrame(animationId);
+    loop();
+}
 
-  function gameOver(){
-    player.alive = false;
-    running = false;
-    infoEl.textContent = 'Kamu menabrak! Tekan Mulai untuk coba lagi';
-    spawnDeathParticles(player.x + player.w/2, player.y + player.h/2);
-  }
+function triggerGameOver() {
+    gameOver = true;
+    gameActive = false;
+    cancelAnimationFrame(animationId);
 
-  // Update loop
-  function update(dt){
-    if (!running) {
-      // still update particles to keep visuals
-      updateParticles(dt);
-      return;
+    gameTitle.textContent = "GAME OVER";
+    gameTitle.style.color = "#ff0055";
+    gameTitle.style.textShadow = "0 0 15px #ff0055";
+    gameDesc.innerHTML = `Anda bertahan hingga <b>LEVEL ${level}</b> dengan total skor <b>${score}</b>.`;
+    startBtn.textContent = "MAIN LAGI";
+    overlay.classList.add('visible');
+}
+
+function loop() {
+    if (!gameActive) return;
+
+    // 1. Bersihkan Layar Efek Fade Out Grid
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // 2. Gambar Struktur Pusat Otomatis Berputar Pelan
+    ctx.strokeStyle = '#222233';
+    ctx.lineWidth = 1;
+    for(let i = 0; i < 6; i++) {
+        const a = (i * Math.PI) / 3;
+        ctx.beginPath();
+        ctx.moveTo(CENTER_X, CENTER_Y);
+        ctx.lineTo(CENTER_X + Math.cos(a) * canvas.width, CENTER_Y + Math.sin(a) * canvas.width);
+        ctx.stroke();
     }
 
-    // increase distance & speed
-    distance += scrollSpeed * dt;
-    scrollSpeed += SPEED_INC * dt * 1000; // small continual increase
+    // 3. Pergerakan Posisi Pemain (Kecepatan Rotasi Tinggi)
+    const rotationSpeed = 0.07;
+    if (keys.ArrowLeft) playerAngle -= rotationSpeed;
+    if (keys.ArrowRight) playerAngle += rotationSpeed;
 
-    // move obstacles (scroll)
-    for (let ob of obstacles) {
-      ob.x -= scrollSpeed * dt;
-    }
-    // remove off-screen obstacles
-    obstacles = obstacles.filter(o => o.x + o.w > -50);
+    // 4. Proses Logika Spawning Rintangan Hexagon
+    spawnTimer++;
+    if (spawnTimer >= spawnInterval) {
+        obstacles.push(new HexWall(baseSpeed));
+        spawnTimer = 0;
+        
+        // Mekanisme Peningkatan Kesulitan Bertahap secara Real-time
+        score += 10;
+        scoreVal.textContent = score;
 
-    ensureObstacles();
-
-    // player physics
-    player.vy += GRAVITY * dt;
-    player.y += player.vy * dt;
-
-    // ground collision
-    if (player.y + player.h >= GROUND_Y) {
-      player.y = GROUND_Y - player.h;
-      player.vy = 0;
-      player.grounded = true;
-    } else {
-      player.grounded = false;
+        if (score % 50 === 0) {
+            level++;
+            levelVal.textContent = level;
+            baseSpeed += 0.4; // Dinding menyusut lebih cepat
+            spawnInterval = Math.max(45, spawnInterval - 6); // Jarak antar dinding memendek
+        }
     }
 
-    // tilt effect
-    player.rotation = Math.max(-0.35, Math.min(0.35, player.vy / 1200));
+    // 5. Update dan Gambar Semua Dinding Rintangan
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+        obstacles[i].update();
+        obstacles[i].draw();
 
-    // collision with obstacles
-    const pRect = { x: player.x, y: player.y, w: player.w, h: player.h };
-    for (let ob of obstacles) {
-      const obRect = { x: ob.x, y: ob.y, w: ob.w, h: ob.h };
-      if (rectsOverlap(pRect, obRect)) {
-        gameOver();
-        break;
-      }
+        // Cek deteksi tabrakan
+        if (obstacles[i].checkCollision(playerAngle)) {
+            triggerGameOver();
+            return;
+        }
+
+        // Hapus objek jika sudah menyusut melewati titik tengah
+        if (obstacles[i].radius <= 10) {
+            obstacles.splice(i, 1);
+            score += 5;
+            scoreVal.textContent = score;
+        }
     }
 
-    updateParticles(dt);
-    // update score display
-    scoreEl.textContent = 'Jarak: ' + Math.floor(distance);
-  }
+    // 6. Gambar Karakter Pemain (Segitiga Neon)
+    const pX = CENTER_X + Math.cos(playerAngle) * PLAYER_DISTANCE;
+    const pY = CENTER_Y + Math.sin(playerAngle) * PLAYER_DISTANCE;
 
-  function updateParticles(dt){
-    for (let i = particles.length -1; i >= 0; i--) {
-      const p = particles[i];
-      p.age += dt*1000;
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      // gravity slightly
-      p.vy += 600 * dt;
-      p.vx *= 0.995;
-      if (p.age >= p.life) particles.splice(i,1);
-    }
-  }
-
-  // Draw functions
-  function draw(){
-    // clear
-    ctx.clearRect(0,0,CSS_W,CSS_H);
-
-    // background gradient sky
-    const sky = ctx.createLinearGradient(0,0,0,CSS_H);
-    sky.addColorStop(0, '#071427');
-    sky.addColorStop(1, '#031026');
-    ctx.fillStyle = sky;
-    ctx.fillRect(0,0,CSS_W,CSS_H);
-
-    // parallax mountains / shapes
-    drawParallax();
-
-    // ground
-    ctx.fillStyle = '#0f2230';
-    ctx.fillRect(0, GROUND_Y, CSS_W, CSS_H - GROUND_Y);
-
-    // dashed road lines
-    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    for (let i = -((distance/6)%40); i < CSS_W; i += 40) {
-      ctx.moveTo(i, GROUND_Y + 44);
-      ctx.lineTo(i+24, GROUND_Y + 44);
-    }
-    ctx.stroke();
-
-    // obstacles
-    for (let ob of obstacles) {
-      // draw spike / block
-      ctx.fillStyle = '#ff5e57';
-      ctx.fillRect(Math.round(ob.x), ob.y, ob.w, ob.h);
-      // top highlight
-      ctx.fillStyle = 'rgba(255,255,255,0.06)';
-      ctx.fillRect(Math.round(ob.x), ob.y, ob.w, 6);
-    }
-
-    // player (square) with small rotation
     ctx.save();
-    ctx.translate(player.x + player.w/2, player.y + player.h/2);
-    ctx.rotate(player.rotation);
-    // body
-    const grad = ctx.createLinearGradient(-player.w/2, -player.h/2, player.w/2, player.h/2);
-    grad.addColorStop(0, '#ffd86b');
-    grad.addColorStop(1, '#ff8a4e');
-    ctx.fillStyle = grad;
-    ctx.fillRect(-player.w/2, -player.h/2, player.w, player.h);
-    // border
-    ctx.strokeStyle = 'rgba(0,0,0,0.12)';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(-player.w/2, -player.h/2, player.w, player.h);
+    ctx.translate(pX, pY);
+    ctx.rotate(playerAngle);
+    
+    ctx.fillStyle = '#00ffcc';
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = '#00ffcc';
+    
+    ctx.beginPath();
+    ctx.moveTo(PLAYER_SIZE * 1.5, 0);
+    ctx.lineTo(-PLAYER_SIZE, -PLAYER_SIZE);
+    ctx.lineTo(-PLAYER_SIZE, PLAYER_SIZE);
+    ctx.closePath();
+    ctx.fill();
     ctx.restore();
 
-    // particles
-    for (let p of particles) {
-      const t = 1 - (p.age / p.life);
-      ctx.globalAlpha = Math.max(0, Math.min(1, t));
-      ctx.fillStyle = `rgba(${p.color}, ${0.9})`;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r * (0.6 + t), 0, Math.PI*2);
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
-
-    // HUD overlays (distance already updated)
-    // if not running show overlay
-    if (!running) {
-      ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      ctx.fillRect(0,0,CSS_W,CSS_H);
-      ctx.fillStyle = '#fff';
-      ctx.font = '24px Inter, Arial';
-      ctx.textAlign = 'center';
-      ctx.fillText('Tekan Space / Klik / Tap untuk meloncat', CSS_W/2, CSS_H/2 - 12);
-      ctx.textAlign = 'start';
-    }
-  }
-
-  function drawParallax(){
-    // simple moving hills
-    const t = performance.now() / 1000;
-    // far
-    ctx.fillStyle = '#071a2a';
+    // 7. Gambar Core Core Pentagonal Tengah
+    ctx.fillStyle = '#111';
+    ctx.strokeStyle = '#ff0055';
+    ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.moveTo(0, GROUND_Y - 40);
-    for (let x=0; x <= CSS_W; x+=20) {
-      const y = GROUND_Y - 60 - Math.sin((x/120) + t*0.4)*12;
-      ctx.lineTo(x,y);
+    for(let i=0; i<=6; i++) {
+        const a = (i * Math.PI) / 3;
+        ctx.lineTo(CENTER_X + Math.cos(a)*20, CENTER_Y + Math.sin(a)*20);
     }
-    ctx.lineTo(CSS_W, GROUND_Y+10);
-    ctx.lineTo(0, GROUND_Y+10);
-    ctx.closePath();
     ctx.fill();
+    ctx.stroke();
 
-    // mid
-    ctx.fillStyle = '#0b2b3a';
-    ctx.beginPath();
-    ctx.moveTo(0, GROUND_Y - 12);
-    for (let x=0; x <= CSS_W; x+=30) {
-      const y = GROUND_Y - 24 - Math.cos((x/80) + t*0.8)*8;
-      ctx.lineTo(x,y);
-    }
-    ctx.lineTo(CSS_W, GROUND_Y+10);
-    ctx.lineTo(0, GROUND_Y+10);
-    ctx.closePath();
-    ctx.fill();
-  }
+    animationId = requestAnimationFrame(loop);
+}
 
-  // Main loop
-  function loop(ts){
-    if (!lastTime) lastTime = ts;
-    const dt = Math.min(0.04, (ts - lastTime) / 1000);
-    lastTime = ts;
-
-    // update & draw
-    update(dt);
-    draw();
-
-    requestAnimationFrame(loop);
-  }
-  requestAnimationFrame(loop);
-
-  // spawn obstacles regularly (initial fill)
-  function initObstacles() {
-    obstacles = [];
-    let x = CSS_W + 40;
-    for (let i=0;i<6;i++){
-      const w = rand(OB_MIN_W, OB_MAX_W);
-      const gap = rand(OB_MIN_GAP, OB_MAX_GAP);
-      addObstacle(x);
-      x += w + gap;
-    }
-  }
-  initObstacles();
-
-})();
+// Event Listener Tombol Mulai
+startBtn.addEventListener('click', initGame);
