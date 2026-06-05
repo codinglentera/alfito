@@ -6,60 +6,94 @@
 }
 
 body {
-    background-color: #080810;
-    font-family: 'Courier New', Courier, monospace;
+    background: linear-gradient(135deg, #0f172a, #1e1b4b);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     display: flex;
     justify-content: center;
     align-items: center;
     height: 100vh;
-    overflow: hidden;
     color: #fff;
 }
 
-#game-container {
+.game-container {
     position: relative;
-    width: 800px;
-    height: 600px;
-    border: 4px solid #00ffcc;
-    box-shadow: 0 0 20px #00ffcc;
-    background-color: #000;
+    width: 500px;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 30px;
+    border-radius: 20px;
+    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    text-align: center;
 }
 
-#ui-layer {
-    position: absolute;
-    top: 20px;
-    left: 20px;
-    right: 20px;
+.header-status {
     display: flex;
     justify-content: space-between;
-    font-size: 24px;
+    margin-bottom: 40px;
+}
+
+.status-box {
+    background: #312e81;
+    padding: 10px 20px;
+    border-radius: 12px;
+    font-size: 1.2rem;
     font-weight: bold;
-    text-shadow: 0 0 8px #ff0055;
-    z-index: 10;
-    pointer-events: none;
+    border: 1px solid #4338ca;
 }
 
-#score-board { color: #ff0055; }
-#level-board { color: #00ffcc; }
+#waktu-val { color: #f43f5e; }
+#skor-val { color: #10b981; }
 
-canvas {
-    display: block;
+.word-section #instruksi {
+    color: #94a3b8;
+    font-size: 0.9rem;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+}
+
+#kata-target {
+    font-size: 3.5rem;
+    color: #38bdf8;
+    text-shadow: 0 0 15px rgba(56, 189, 248, 0.4);
+    margin-bottom: 40px;
+    letter-spacing: 2px;
+}
+
+.input-section input {
     width: 100%;
-    height: 100%;
+    padding: 15px 20px;
+    font-size: 1.3rem;
+    border: 2px solid #4338ca;
+    border-radius: 12px;
+    background: #0f172a;
+    color: #fff;
+    outline: none;
+    text-align: center;
+    transition: all 0.3s ease;
 }
 
+.input-section input:focus {
+    border-color: #38bdf8;
+    box-shadow: 0 0 15px rgba(56, 189, 248, 0.3);
+}
+
+/* Tampilan Overlay Menu Akhir & Awal */
 #overlay {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(5, 5, 10, 0.85);
+    background: #0f172a;
+    border-radius: 20px;
     display: flex;
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    z-index: 20;
+    z-index: 10;
+    padding: 20px;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.3s ease;
@@ -70,38 +104,32 @@ canvas {
     pointer-events: auto;
 }
 
-#game-title {
-    font-size: 48px;
-    color: #ff0055;
-    text-shadow: 0 0 15px #ff0055;
+#overlay-title {
+    font-size: 2.2rem;
+    color: #38bdf8;
     margin-bottom: 15px;
-    letter-spacing: 4px;
 }
 
-#game-desc {
-    font-size: 16px;
-    color: #cccccc;
-    text-align: center;
-    max-width: 500px;
+#overlay-desc {
+    color: #94a3b8;
+    font-size: 1rem;
     margin-bottom: 30px;
-    line-height: 1.6;
+    line-height: 1.5;
 }
 
 #start-btn {
-    background: transparent;
-    color: #00ffcc;
-    border: 2px solid #00ffcc;
-    padding: 12px 30px;
-    font-size: 20px;
-    font-family: inherit;
+    background: #10b981;
+    color: #fff;
+    border: none;
+    padding: 12px 35px;
+    font-size: 1.1rem;
     font-weight: bold;
+    border-radius: 10px;
     cursor: pointer;
-    box-shadow: 0 0 10px rgba(0, 255, 204, 0.3);
-    transition: all 0.2s ease;
+    transition: transform 0.2s, background-color 0.2s;
 }
 
 #start-btn:hover {
-    background: #00ffcc;
-    color: #000;
-    box-shadow: 0 0 20px #00ffcc;
+    background: #059669;
+    transform: scale(1.05);
 }
